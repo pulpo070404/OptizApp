@@ -10,7 +10,7 @@ def main(page: ft.Page):
     page.window_width = 380
     page.window_height = 800
 
-    # --- COLORES HEXADECIMALES (Seguros - Sin ft.colors) ---
+    # --- COLORES HEXADECIMALES (Seguros) ---
     C_AZUL = "#1976D2"
     C_AZUL_BG = "#BBDEFB"
     C_NARANJA = "#FF9800"
@@ -29,29 +29,90 @@ def main(page: ft.Page):
     # --- WIDGET LEYENDA ---
     leyenda_container = ft.Row(wrap=True, alignment="center", spacing=10)
 
-    # --- MOTOR MATEMÁTICO (SIMPLEX) ---
-    def resolver_simplex(c, A, b, es_max):
+    # --- MOTOR MATEMÁTICO (SIMPLEX CON BIG-M) ---
+    def resolver_simplex(c, A, b, signos, es_max):
         try:
+            M = 100000.0  # Penalización Grande (Big M)
             num_vars = len(c)
             num_rest = len(b)
-            tabla = []
             
-            # Construir Tabla
+            # Contar variables artificiales necesarias (para >= y =)
+            num_artificial = 0
+            for s in signos:
+                if s in [">=", "≥", "="]:
+                    num_artificial += 1
+            
+            tabla = []
+            art_indices = [] # Para guardar dónde están las artificiales
+            art_counter = 0
+            
+            # Construir la matriz aumentada
             for i in range(num_rest):
-                row = A[i] + [0.0] * num_rest + [b[i]]
-                row[num_vars + i] = 1.0
+                # 1. Coeficientes de variables originales
+                row = list(A[i])
+                
+                # 2. Variables de Holgura (Slacks)
+                slacks = [0.0] * num_rest
+                s = signos[i]
+                if s in ["<=", "≤"]:
+                    slacks[i] = 1.0
+                elif s in [">=", "≥"]:
+                    slacks[i] = -1.0
+                # Si es "=", no lleva holgura
+                row.extend(slacks)
+                
+                # 3. Variables Artificiales
+                arts = [0.0] * num_artificial
+                if s in [">=", "≥", "="]:
+                    arts[art_counter] = 1.0
+                    # Guardamos índice de fila y columna para pre-procesar Z después
+                    # Columna = vars + slacks + art_counter
+                    art_indices.append((i, num_vars + num_rest + art_counter))
+                    art_counter += 1
+                row.extend(arts)
+                
+                # 4. Solución (RHS)
+                row.append(b[i])
                 tabla.append(row)
             
-            z_row = [-x if es_max else x for x in c] + [0.0] * num_rest + [0.0]
+            # Construir Fila Z
+            # Si es Max: Z - cX... = 0  -> Coefs son -c
+            # Si es Min: Min Z = Max (-Z).  -Z + cX... = 0 -> Coefs son c
+            if es_max:
+                z_row = [-val for val in c]
+            else:
+                z_row = [val for val in c]
+                
+            # Agregar ceros para holguras
+            z_row.extend([0.0] * num_rest)
+            
+            # Agregar penalización -M para artificiales (en problema de Maximización)
+            z_row.extend([-M] * num_artificial)
+            
+            # RHS de Z
+            z_row.append(0.0)
+            
+            # PRE-PROCESAMIENTO BIG-M:
+            # Las variables artificiales básicas deben tener coeficiente 0 en la fila Z.
+            # Operación: Fila_Z = Fila_Z + M * Fila_Restriccion
+            for r_idx, c_idx in art_indices:
+                row_val = tabla[r_idx]
+                for j in range(len(z_row)):
+                    z_row[j] += M * row_val[j]
+            
             tabla.append(z_row)
             
-            # Iteraciones
-            for _ in range(50):
+            # ITERACIONES SIMPLEX
+            for _ in range(100):
                 z = tabla[-1]
+                # Buscar el valor más negativo en Z (criterio de entrada)
                 min_val = min(z[:-1])
-                if min_val >= -1e-9: break
+                if min_val >= -1e-9:
+                    break # Óptimo alcanzado
                 
                 pivot_col = z.index(min_val)
+                
+                # Prueba del cociente (Ratio Test)
                 min_ratio = float('inf')
                 pivot_row = -1
                 
@@ -63,33 +124,43 @@ def main(page: ft.Page):
                             min_ratio = ratio
                             pivot_row = i
                 
-                if pivot_row == -1: return None
+                if pivot_row == -1:
+                    return None # No acotado
                 
+                # Pivoteo Gauss-Jordan
                 pivot_val = tabla[pivot_row][pivot_col]
                 tabla[pivot_row] = [x / pivot_val for x in tabla[pivot_row]]
+                
                 for i in range(len(tabla)):
                     if i != pivot_row:
                         factor = tabla[i][pivot_col]
                         tabla[i] = [tabla[i][j] - factor * tabla[pivot_row][j] for j in range(len(tabla[0]))]
             
-            # Resultados
+            # Extraer Solución
             res_x = [0.0] * num_vars
             for j in range(num_vars):
                 col = [tabla[i][j] for i in range(num_rest)]
+                # Buscar columnas unitarias (básicas)
                 if col.count(1.0) == 1:
                     is_basic = True
                     for val in col:
-                        if abs(val) > 1e-9 and abs(val - 1.0) > 1e-9: is_basic = False
+                        if abs(val) > 1e-9 and abs(val - 1.0) > 1e-9:
+                            is_basic = False
                     if is_basic:
                         idx = col.index(1.0)
-                        if idx < num_rest: res_x[j] = tabla[idx][-1]
+                        if idx < num_rest:
+                            res_x[j] = tabla[idx][-1]
             
-            z_final = tabla[-1][-1] * (1 if es_max else -1)
+            z_final = tabla[-1][-1]
+            # Si minimizamos, el resultado en la tabla es -Z, así que invertimos
+            if not es_max:
+                z_final *= -1
+                
             return res_x, z_final
         except:
             return None
 
-    # --- LÓGICA DE UI Y CÁLCULO ---
+    # --- LÓGICA DE UI ---
     def calcular(e):
         try:
             txt_error.visible = False
@@ -100,19 +171,26 @@ def main(page: ft.Page):
                 v = float(inp.value) if inp.value else 0.0
                 c.append(v)
             
-            # 2. Leer Restricciones
+            # 2. Leer Restricciones y SIGNOS
             A = []
             b = []
+            signos = [] # Lista para guardar <=, >=, =
             datos_grafico = []
             
             max_val_intercept = 0 
             
             for i, row in enumerate(restricciones_rows):
                 coefs = []
+                # Los inputs de coeficientes son todos menos los últimos 2 (dropdown y limite)
                 for inp in row[:-2]:
                     v = float(inp.value) if inp.value else 0.0
                     coefs.append(v)
                 
+                # Leer Dropdown (Penúltimo elemento)
+                dd_signo = row[-2]
+                signos.append(dd_signo.value)
+                
+                # Leer Límite (Último elemento)
                 inp_lim = row[-1]
                 if i == 0 and switch_slider.value:
                     val_b = slider.value
@@ -121,7 +199,7 @@ def main(page: ft.Page):
                 else:
                     val_b = float(inp_lim.value) if inp_lim.value else 0.0
                 
-                # Buscar interceptos para escala
+                # Calcular escala para el gráfico
                 for coef in coefs:
                     if abs(coef) > 0.01:
                         max_val_intercept = max(max_val_intercept, val_b/coef)
@@ -132,25 +210,23 @@ def main(page: ft.Page):
                 if len(c) == 2:
                     datos_grafico.append({'a': coefs, 'b': val_b, 'id': i+1})
 
-            # Ajustar Slider Max
+            # Ajustar Slider
             if slider.max < max_val_intercept:
                  slider.max = max(100, max_val_intercept * 1.5)
 
-            # 3. Resolver
+            # 3. Resolver pasando los SIGNOS
             es_max = dd_obj.value == "Maximizar"
-            res = resolver_simplex(c, A, b, es_max)
+            res = resolver_simplex(c, A, b, signos, es_max)
             
             if res:
                 sol_x, sol_z = res
                 
-                # Mostrar Éxito
                 cont_res.bgcolor = C_VERDE_BG
                 cont_res.border = ft.border.all(1, C_VERDE)
                 txt_z.value = f"Z = {sol_z:.2f}"
                 txt_z.color = C_VERDE
                 txt_vars.value = " | ".join([f"X{k+1}={v:.2f}" for k,v in enumerate(sol_x)])
                 
-                # Graficar
                 if len(c) == 2:
                     dibujar_grafico(datos_grafico, sol_x[0], sol_x[1], c, sol_z)
                     cont_grafico.visible = True
@@ -161,16 +237,17 @@ def main(page: ft.Page):
                 cont_res.border = ft.border.all(1, C_ROJO)
                 txt_z.value = "Sin Solución"
                 txt_z.color = C_ROJO
-                txt_vars.value = "Inconsistente"
+                txt_vars.value = "Región no factible"
                 cont_grafico.visible = False
                 
         except Exception as ex:
             txt_error.value = f"Error: {str(ex)}"
             txt_error.visible = True
+            print(traceback.format_exc())
             
         page.update()
 
-    # --- GRÁFICO ---
+    # --- GRÁFICO (CONSERVADO IGUAL) ---
     chart = ft.LineChart(
         data_series=[],
         border=ft.border.all(1, "#E0E0E0"),
@@ -186,7 +263,7 @@ def main(page: ft.Page):
         chart.data_series = []
         leyenda_container.controls = []
         
-        # 1. ESCALA
+        # Escala
         max_coord = 0
         for r in restricciones:
             a1, a2 = r['a']
@@ -201,15 +278,12 @@ def main(page: ft.Page):
         chart.max_y = limit
         
         colores = [C_AZUL, C_NARANJA, "#9C27B0", "#009688"]
-        # Aquí están los colores de fondo predefinidos (HEX)
         bg_colores = [C_AZUL_BG, C_NARANJA_BG, "#E1BEE7", "#B2DFDB"]
         
-        # 2. DIBUJAR RESTRICCIONES
         for idx, r in enumerate(restricciones):
             a1, a2 = r['a']
             b = r['b']
             color = colores[idx % len(colores)]
-            # Seleccionamos el color de fondo correspondiente (SIN usar ft.colors.with_opacity)
             bg_color_hex = bg_colores[idx % len(bg_colores)]
             
             pts = []
@@ -229,7 +303,7 @@ def main(page: ft.Page):
                         stroke_width=3,
                         color=color,
                         curved=False,
-                        below_line_bgcolor=bg_color_hex # ¡CORREGIDO! Usa Hex directo
+                        below_line_bgcolor=bg_color_hex
                     )
                 )
                 leyenda_container.controls.append(
@@ -239,7 +313,7 @@ def main(page: ft.Page):
                     ], spacing=2)
                 )
 
-        # 3. LÍNEA Z
+        # Línea Z
         try:
             c1, c2 = c[0], c[1]
             z_pts = []
@@ -266,7 +340,7 @@ def main(page: ft.Page):
         except:
             pass
 
-        # 4. PUNTO ÓPTIMO
+        # Óptimo
         chart.data_series.append(
             ft.LineChartData(
                 data_points=[ft.LineChartDataPoint(opt_x1, opt_x2)],
@@ -324,8 +398,9 @@ def main(page: ft.Page):
             )
             row.append(inp_cf)
         
+        # AQUÍ ESTÁ EL SELECTOR DE SIGNO QUE ANTES NO LEÍAMOS
         dd_s = ft.Dropdown(
-            options=[ft.dropdown.Option("≤"), ft.dropdown.Option("≥")],
+            options=[ft.dropdown.Option("≤"), ft.dropdown.Option("≥"), ft.dropdown.Option("=")],
             value="≤",
             width=60,
             bgcolor=C_GRIS,
