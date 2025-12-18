@@ -10,7 +10,7 @@ def main(page: ft.Page):
     page.window_width = 380
     page.window_height = 800
 
-    # --- COLORES HEXADECIMALES (Seguros para Android) ---
+    # --- COLORES HEXADECIMALES (Seguros - Sin ft.colors) ---
     C_AZUL = "#1976D2"
     C_AZUL_BG = "#BBDEFB"
     C_NARANJA = "#FF9800"
@@ -105,7 +105,7 @@ def main(page: ft.Page):
             b = []
             datos_grafico = []
             
-            max_val_intercept = 0 # Para calcular escala del slider
+            max_val_intercept = 0 
             
             for i, row in enumerate(restricciones_rows):
                 coefs = []
@@ -121,7 +121,7 @@ def main(page: ft.Page):
                 else:
                     val_b = float(inp_lim.value) if inp_lim.value else 0.0
                 
-                # Buscar interceptos aproximados para la escala
+                # Buscar interceptos para escala
                 for coef in coefs:
                     if abs(coef) > 0.01:
                         max_val_intercept = max(max_val_intercept, val_b/coef)
@@ -132,7 +132,7 @@ def main(page: ft.Page):
                 if len(c) == 2:
                     datos_grafico.append({'a': coefs, 'b': val_b, 'id': i+1})
 
-            # Ajustar Slider Max dinámicamente
+            # Ajustar Slider Max
             if slider.max < max_val_intercept:
                  slider.max = max(100, max_val_intercept * 1.5)
 
@@ -170,7 +170,7 @@ def main(page: ft.Page):
             
         page.update()
 
-    # --- GRÁFICO (ESCALADO CORRECTO) ---
+    # --- GRÁFICO ---
     chart = ft.LineChart(
         data_series=[],
         border=ft.border.all(1, "#E0E0E0"),
@@ -186,31 +186,22 @@ def main(page: ft.Page):
         chart.data_series = []
         leyenda_container.controls = []
         
-        # 1. CÁLCULO INTELIGENTE DE ESCALA
-        # Buscamos el valor más lejano (intercepto) para ajustar el zoom
+        # 1. ESCALA
         max_coord = 0
-        
-        # Revisar restricciones
         for r in restricciones:
             a1, a2 = r['a']
             b = r['b']
-            # Corte en X (y=0) -> x = b/a1
-            if abs(a1) > 0.01:
-                max_coord = max(max_coord, b/a1)
-            # Corte en Y (x=0) -> y = b/a2
-            if abs(a2) > 0.01:
-                max_coord = max(max_coord, b/a2)
+            if abs(a1) > 0.01: max_coord = max(max_coord, b/a1)
+            if abs(a2) > 0.01: max_coord = max(max_coord, b/a2)
         
-        # Revisar óptimo
         max_coord = max(max_coord, opt_x1, opt_x2)
-        
-        # Margen de seguridad (20%)
         limit = max(10, max_coord * 1.2)
         
         chart.max_x = limit
         chart.max_y = limit
         
         colores = [C_AZUL, C_NARANJA, "#9C27B0", "#009688"]
+        # Aquí están los colores de fondo predefinidos (HEX)
         bg_colores = [C_AZUL_BG, C_NARANJA_BG, "#E1BEE7", "#B2DFDB"]
         
         # 2. DIBUJAR RESTRICCIONES
@@ -218,8 +209,10 @@ def main(page: ft.Page):
             a1, a2 = r['a']
             b = r['b']
             color = colores[idx % len(colores)]
-            pts = []
+            # Seleccionamos el color de fondo correspondiente (SIN usar ft.colors.with_opacity)
+            bg_color_hex = bg_colores[idx % len(bg_colores)]
             
+            pts = []
             if abs(a2) < 0.01 and abs(a1) > 0.01: # Vertical
                 val = b/a1
                 pts = [ft.LineChartDataPoint(val, 0), ft.LineChartDataPoint(val, limit)]
@@ -236,10 +229,9 @@ def main(page: ft.Page):
                         stroke_width=3,
                         color=color,
                         curved=False,
-                        below_line_bgcolor=ft.colors.with_opacity(0.15, color)
+                        below_line_bgcolor=bg_color_hex # ¡CORREGIDO! Usa Hex directo
                     )
                 )
-                # Agregar a leyenda
                 leyenda_container.controls.append(
                     ft.Row([
                         ft.Container(width=12, height=12, bgcolor=color, border_radius=2),
@@ -247,15 +239,13 @@ def main(page: ft.Page):
                     ], spacing=2)
                 )
 
-        # 3. DIBUJAR FUNCIÓN OBJETIVO (Línea Z)
-        # Dibujamos línea entre cortes de eje para que abarque todo
+        # 3. LÍNEA Z
         try:
             c1, c2 = c[0], c[1]
             z_pts = []
-            # Si maximizamos 10x + 20y = Z
             if abs(c1) > 0.01 and abs(c2) > 0.01:
-                y_int = z_val / c2 # Corte Y
-                x_int = z_val / c1 # Corte X
+                y_int = z_val / c2
+                x_int = z_val / c1
                 z_pts = [ft.LineChartDataPoint(0, y_int), ft.LineChartDataPoint(x_int, 0)]
             
             if z_pts:
@@ -287,7 +277,7 @@ def main(page: ft.Page):
         )
         page.update()
 
-    # --- UI COMPONENTES (FORMATO SEGURO) ---
+    # --- UI COMPONENTES ---
     dd_obj = ft.Dropdown(
         options=[ft.dropdown.Option("Maximizar"), ft.dropdown.Option("Minimizar")],
         value="Maximizar",
@@ -301,7 +291,6 @@ def main(page: ft.Page):
     
     def add_var(e):
         idx = len(obj_inputs) + 1
-        # Separado para evitar errores de copia
         inp = ft.TextField(
             label=f"C{idx}",
             width=70,
