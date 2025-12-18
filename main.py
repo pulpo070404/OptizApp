@@ -1,396 +1,254 @@
 import flet as ft
-import math
+import traceback
 
 def main(page: ft.Page):
-    # Configuración de pantalla móvil
-    page.title = "Solver Pro"
-    page.theme_mode = "light"
-    page.scroll = "adaptive"
-    page.padding = 15
-    page.window_width = 380
-    page.window_height = 800
+    # --- BLOQUE DE SEGURIDAD GLOBAL ---
+    try:
+        page.title = "Solver Pro Segura"
+        page.theme_mode = "light"
+        page.scroll = "adaptive"
+        page.padding = 20
+        page.window_width = 380
+        page.window_height = 800
 
-    # --- CONSTANTES DE COLOR ---
-    C_PRIMARY = "#1976D2"    # Azul fuerte
-    C_SECONDARY = "#E3F2FD"  # Azul claro
-    C_SUCCESS = "#388E3C"    # Verde
-    C_ERROR = "#D32F2F"      # Rojo
-    C_BG_RES = "#F5F5F5"     # Gris muy claro
-
-    # --- ESTADO DE LA APP ---
-    obj_inputs = []
-    restricciones_rows = []
-    
-    # --- MOTOR MATEMÁTICO (SIMPLEX PURO - SIN LIBRERÍAS EXTERNAS) ---
-    def resolver_simplex_nativo(c, A, b, es_max):
-        """
-        Resuelve Simplex usando listas nativas de Python.
-        Evita usar Numpy/Scipy para compatibilidad total con Android.
-        """
-        try:
-            num_vars = len(c)
-            num_rest = len(b)
-            
-            # 1. Construir Tabla Inicial
-            # Estructura: [Vars... | Holguras... | Solución]
-            tabla = []
-            
-            # Filas de restricciones
-            for i in range(num_rest):
-                fila = A[i] + [0.0] * num_rest + [b[i]]
-                fila[num_vars + i] = 1.0  # Variable de holgura
-                tabla.append(fila)
-            
-            # Fila Z (Función Objetivo)
-            # Max Z -> Z - c1x1 - ... = 0
-            if es_max:
-                fila_z = [-val for val in c] + [0.0] * num_rest + [0.0]
-            else:
-                fila_z = [val for val in c] + [0.0] * num_rest + [0.0]
-            tabla.append(fila_z)
-            
-            # 2. Iteraciones del Simplex
-            while True:
-                # Buscar columna pivote (el valor más negativo en fila Z)
-                fila_obj = tabla[-1]
-                min_val = min(fila_obj[:-1])
-                
-                if min_val >= -1e-9:
-                    break # Óptimo encontrado
-                
-                col_pivote = fila_obj.index(min_val)
-                
-                # Buscar fila pivote (Ratio Test)
-                min_ratio = float('inf')
-                fila_pivote_idx = -1
-                
+        # --- VARIABLES ---
+        obj_inputs = []
+        restricciones_rows = []
+        
+        # --- SOLVER SIMPLE (OPTIMIZADO) ---
+        def resolver_logica(c, A, b, es_max):
+            try:
+                # Simplex muy básico para evitar bloqueos
+                num_vars = len(c)
+                num_rest = len(b)
+                tabla = []
+                # Crear tabla
                 for i in range(num_rest):
-                    val_col = tabla[i][col_pivote]
-                    val_sol = tabla[i][-1]
+                    row = A[i] + [0.0]*num_rest + [b[i]]
+                    row[num_vars + i] = 1.0
+                    tabla.append(row)
+                
+                z_row = [-x if es_max else x for x in c] + [0.0]*num_rest + [0.0]
+                tabla.append(z_row)
+                
+                # Iterar (Máximo 20 iteraciones para no colgar el celular)
+                for _ in range(20):
+                    z = tabla[-1]
+                    min_val = min(z[:-1])
+                    if min_val >= -1e-9: break
                     
-                    if val_col > 1e-9:
-                        ratio = val_sol / val_col
-                        if ratio < min_ratio:
-                            min_ratio = ratio
-                            fila_pivote_idx = i
-                            
-                if fila_pivote_idx == -1:
-                    return None # No acotado
-                
-                # 3. Operaciones Gauss-Jordan
-                # Normalizar fila pivote
-                pivote = tabla[fila_pivote_idx][col_pivote]
-                tabla[fila_pivote_idx] = [x / pivote for x in tabla[fila_pivote_idx]]
-                
-                # Hacer ceros en las otras filas
-                for i in range(len(tabla)):
-                    if i != fila_pivote_idx:
-                        factor = tabla[i][col_pivote]
-                        nueva_fila = []
-                        for j in range(len(tabla[0])):
-                            val = tabla[i][j] - factor * tabla[fila_pivote_idx][j]
-                            nueva_fila.append(val)
-                        tabla[i] = nueva_fila
-
-            # 4. Extraer Resultados
-            soluciones = [0.0] * num_vars
-            for j in range(num_vars):
-                columna = [tabla[i][j] for i in range(num_rest)]
-                # Si es columna básica (un 1 y puros 0s)
-                es_basica = False
-                if columna.count(1.0) == 1:
-                    # Verificar que el resto sean ceros (con tolerancia)
-                    ceros = sum(1 for x in columna if abs(x) < 1e-9)
-                    if ceros == len(columna) - 1:
-                        idx_uno = columna.index(1.0)
-                        if idx_uno < num_rest: # No tomar fila Z
-                             soluciones[j] = tabla[idx_uno][-1]
-
-            valor_z = tabla[-1][-1]
-            if es_max: valor_z *= 1 # Ajuste de signo según maximización
-            else: valor_z *= -1
-            
-            return soluciones, valor_z
-
-        except Exception:
-            return None
-
-    # --- LÓGICA DE INTERFAZ ---
-    def procesar_calculo(e):
-        try:
-            # Recopilar Objetivo
-            es_max = dd_objetivo.value == "Maximizar"
-            coeffs_obj = []
-            max_val_grafico = 0
-            
-            for inp in obj_inputs:
-                v = float(inp.value) if inp.value else 0.0
-                coeffs_obj.append(v)
-                max_val_grafico = max(max_val_grafico, v)
-                
-            # Recopilar Restricciones
-            matriz_A = []
-            vector_b = []
-            datos_grafico = [] # Para dibujar líneas
-            
-            for i, row in enumerate(restricciones_rows):
-                # Estructura row: [Input1, Input2..., Dropdown, InputLimite]
-                inputs_coef = row[:-2]
-                dd_sign = row[-2]
-                inp_lim = row[-1]
-                
-                # Lógica Slider R1
-                if i == 0 and switch_slider.value:
-                    val_limite = slider_r1.value
-                    inp_lim.value = str(int(val_limite))
-                else:
-                    val_limite = float(inp_lim.value) if inp_lim.value else 0.0
-                
-                max_val_grafico = max(max_val_grafico, val_limite)
-                
-                # Coeficientes de la fila
-                fila_coeffs = []
-                for inp in inputs_coef:
-                    v = float(inp.value) if inp.value else 0.0
-                    fila_coeffs.append(v)
-                    max_val_grafico = max(max_val_grafico, v)
-                
-                matriz_A.append(fila_coeffs)
-                vector_b.append(val_limite)
-                
-                # Guardar datos puros para el gráfico
-                datos_grafico.append({
-                    'a': fila_coeffs,
-                    'b': val_limite,
-                    'sign': dd_sign.value, 
-                    'id': i+1
-                })
-            
-            # Ajustar Slider automáticamente
-            nuevo_max_slider = max(100, max_val_grafico * 2)
-            if slider_r1.max != nuevo_max_slider:
-                slider_r1.max = nuevo_max_slider
-                
-            # RESOLVER
-            res = resolver_simplex_nativo(coeffs_obj, matriz_A, vector_b, es_max)
-            
-            if res:
-                sol_x, sol_z = res
-                
-                # Mostrar Éxito
-                panel_resultados.bgcolor = "#E8F5E9" # Verde claro
-                panel_resultados.border = ft.border.all(1, C_SUCCESS)
-                txt_estado.value = "SOLUCIÓN ÓPTIMA"
-                txt_estado.color = C_SUCCESS
-                txt_z.value = f"Z = {sol_z:.2f}"
-                
-                detalles = "Variables: "
-                for k, val in enumerate(sol_x):
-                    detalles += f"X{k+1}={val:.2f}  "
-                txt_detalles.value = detalles
-                
-                # Graficar (Si son 2 variables)
-                if len(coeffs_obj) == 2:
-                    dibujar_grafico(datos_grafico, sol_x[0], sol_x[1])
-                    contenedor_grafico.visible = True
-                else:
-                    contenedor_grafico.visible = False
+                    pivot_col = z.index(min_val)
+                    min_ratio = float('inf')
+                    pivot_row = -1
                     
-            else:
-                # Mostrar Error
-                panel_resultados.bgcolor = "#FFEBEE" # Rojo claro
-                panel_resultados.border = ft.border.all(1, C_ERROR)
-                txt_estado.value = "NO HAY SOLUCIÓN"
-                txt_estado.color = C_ERROR
-                txt_z.value = "---"
-                txt_detalles.value = "Verifica restricciones incompatibles"
-                contenedor_grafico.visible = False
+                    for i in range(num_rest):
+                        if tabla[i][pivot_col] > 1e-9:
+                            ratio = tabla[i][-1] / tabla[i][pivot_col]
+                            if ratio < min_ratio:
+                                min_ratio = ratio
+                                pivot_row = i
+                    
+                    if pivot_row == -1: return None
+                    
+                    # Gauss
+                    pivot_val = tabla[pivot_row][pivot_col]
+                    tabla[pivot_row] = [x/pivot_val for x in tabla[pivot_row]]
+                    for i in range(len(tabla)):
+                        if i != pivot_row:
+                            f = tabla[i][pivot_col]
+                            tabla[i] = [tabla[i][j] - f*tabla[pivot_row][j] for j in range(len(tabla[0]))]
                 
-        except Exception as ex:
-            txt_detalles.value = f"Error: {str(ex)}"
+                # Resultado
+                res = [0.0]*num_vars
+                for j in range(num_vars):
+                    col = [tabla[i][j] for i in range(num_rest)]
+                    if col.count(1.0) == 1:
+                        idx = col.index(1.0)
+                        if idx < num_rest: res[j] = tabla[idx][-1]
+                
+                z_final = tabla[-1][-1] * (1 if es_max else -1)
+                return res, z_final
+            except:
+                return None
+
+        # --- EVENTO DEL BOTÓN CALCULAR ---
+        def clic_calcular(e):
+            try:
+                txt_error.visible = False
+                
+                # 1. Leer Objetivo
+                c = []
+                for inp in obj_inputs:
+                    if inp.value == "": 
+                        inp.value = "0"
+                    c.append(float(inp.value))
+                
+                # 2. Leer Restricciones
+                A = []
+                b = []
+                raw_rest = [] # Para gráfico
+                
+                for i, row in enumerate(restricciones_rows):
+                    coefs = []
+                    # Inputs variables
+                    for inp in row[:-2]:
+                        if inp.value == "": inp.value = "0"
+                        coefs.append(float(inp.value))
+                    
+                    # Límite (Slider o Texto)
+                    lim_inp = row[-1]
+                    # Si es la primera fila y el slider está activo
+                    if i == 0 and switch_slider.value:
+                        val_b = slider.value
+                    else:
+                        if lim_inp.value == "": lim_inp.value = "0"
+                        val_b = float(lim_inp.value)
+                    
+                    A.append(coefs)
+                    b.append(val_b)
+                    
+                    # Guardar datos gráfico (solo si son 2 vars)
+                    if len(c) == 2:
+                        raw_rest.append({'a': coefs, 'b': val_b, 'id': i+1})
+
+                # 3. Resolver
+                es_max = dd_obj.value == "Maximizar"
+                resultado = resolver_logica(c, A, b, es_max)
+                
+                if resultado:
+                    sol_x, sol_z = resultado
+                    txt_res_z.value = f"Z = {sol_z:.2f}"
+                    txt_res_x.value = f"Variables: {sol_x}"
+                    cont_res.bgcolor = "#E8F5E9" # Verde
+                    
+                    # 4. Graficar (Solo si hay 2 variables)
+                    if len(c) == 2:
+                        dibujar_grafico_seguro(raw_rest, sol_x[0], sol_x[1])
+                        cont_grafico.visible = True
+                    else:
+                        cont_grafico.visible = False
+                else:
+                    txt_res_z.value = "Sin solución"
+                    txt_res_x.value = "Revisa las restricciones"
+                    cont_res.bgcolor = "#FFEBEE" # Rojo
+                    cont_grafico.visible = False
+                    
+                page.update()
+                
+            except Exception as ex:
+                txt_error.value = f"Error al calcular: {str(ex)}"
+                txt_error.visible = True
+                page.update()
+
+        # --- GRÁFICO SEGURO ---
+        chart = ft.LineChart(data_series=[], border=ft.border.all(1, "grey"), expand=True, min_x=0, min_y=0)
+        
+        def dibujar_grafico_seguro(restricciones, x1, x2):
+            chart.data_series = []
+            max_val = max(x1, x2, 10) * 1.5
+            chart.max_x = max_val
+            chart.max_y = max_val
             
-        page.update()
-
-    # --- GRÁFICOS NATIVOS (FLET CHARTS) ---
-    chart_lines = []
-    chart_obj = ft.LineChart(
-        data_series=chart_lines,
-        border=ft.border.all(1, ft.colors.GREY_300),
-        left_axis=ft.ChartAxis(labels_size=30, title=ft.Text("X2")),
-        bottom_axis=ft.ChartAxis(labels_size=30, title=ft.Text("X1")),
-        tooltip_bgcolor=ft.colors.with_opacity(0.8, C_PRIMARY),
-        min_y=0, min_x=0,
-        expand=True
-    )
-
-    def dibujar_grafico(restricciones, opt_x1, opt_x2):
-        chart_obj.data_series = []
-        
-        # Calcular escala
-        max_eje = max(opt_x1, opt_x2, 10) * 1.5
-        chart_obj.max_x = max_eje
-        chart_obj.max_y = max_eje
-        
-        colores = [ft.colors.BLUE, ft.colors.ORANGE, ft.colors.PURPLE, ft.colors.TEAL]
-        
-        # Dibujar líneas de restricción
-        for idx, r in enumerate(restricciones):
-            a1 = r['a'][0]
-            a2 = r['a'][1]
-            b = r['b']
-            color = colores[idx % len(colores)]
+            colores = [ft.colors.BLUE, ft.colors.ORANGE, ft.colors.TEAL]
             
-            puntos = []
+            for i, r in enumerate(restricciones):
+                a1, a2 = r['a']
+                b = r['b']
+                pts = []
+                
+                # Evitar división por cero
+                if abs(a2) < 0.01 and abs(a1) > 0.01: # Vertical
+                    val = b/a1
+                    pts = [ft.LineChartDataPoint(val, 0), ft.LineChartDataPoint(val, max_val)]
+                elif abs(a1) < 0.01 and abs(a2) > 0.01: # Horizontal
+                    val = b/a2
+                    pts = [ft.LineChartDataPoint(0, val), ft.LineChartDataPoint(max_val, val)]
+                elif abs(a1) > 0.01 and abs(a2) > 0.01: # Normal
+                    pts = [ft.LineChartDataPoint(0, b/a2), ft.LineChartDataPoint(b/a1, 0)]
+                
+                if pts:
+                    chart.data_series.append(ft.LineChartData(data_points=pts, color=colores[i%3], stroke_width=2))
             
-            # Caso 1: Línea vertical (a2 = 0)
-            if abs(a2) < 1e-9:
-                if abs(a1) > 1e-9:
-                    x_val = b / a1
-                    puntos = [ft.LineChartDataPoint(x_val, 0), ft.LineChartDataPoint(x_val, max_eje)]
-            
-            # Caso 2: Línea horizontal (a1 = 0)
-            elif abs(a1) < 1e-9:
-                if abs(a2) > 1e-9:
-                    y_val = b / a2
-                    puntos = [ft.LineChartDataPoint(0, y_val), ft.LineChartDataPoint(max_eje, y_val)]
-            
-            # Caso 3: Oblicua
-            else:
-                y_corte = b / a2 # Si x=0
-                x_corte = b / a1 # Si y=0
-                puntos = [ft.LineChartDataPoint(0, y_corte), ft.LineChartDataPoint(x_corte, 0)]
-            
-            if puntos:
-                chart_obj.data_series.append(
-                    ft.LineChartData(
-                        data_points=puntos,
-                        stroke_width=2,
-                        color=color,
-                        title=f"R{r['id']}",
-                        curved=False
-                    )
-                )
-        
-        # Dibujar Punto Óptimo
-        chart_obj.data_series.append(
-            ft.LineChartData(
-                data_points=[ft.LineChartDataPoint(opt_x1, opt_x2)],
-                stroke_width=0,
-                color=ft.colors.RED,
-                point=True,
-                title="Óptimo",
-                stroke_cap_round=True
-            )
-        )
+            # Punto óptimo
+            chart.data_series.append(ft.LineChartData(data_points=[ft.LineChartDataPoint(x1, x2)], color="red", stroke_width=0, point=True))
 
-    # --- CONSTRUCCIÓN UI ---
-    
-    # 1. Cabecera
-    dd_objetivo = ft.Dropdown(
-        options=[ft.dropdown.Option("Maximizar"), ft.dropdown.Option("Minimizar")],
-        value="Maximizar", width=140, text_size=13, bgcolor="white", content_padding=8,
-        on_change=procesar_calculo
-    )
-    
-    # 2. Variables
-    cont_vars = ft.Row(wrap=True, spacing=5)
-    def agregar_variable(e):
-        n = len(obj_inputs) + 1
-        txt = ft.TextField(label=f"C{n}", width=70, text_size=12, keyboard_type="number", bgcolor="white", content_padding=5, on_change=procesar_calculo)
-        obj_inputs.append(txt)
-        cont_vars.controls.append(txt)
+        # --- INTERFAZ ---
+        dd_obj = ft.Dropdown(options=[ft.dropdown.Option("Maximizar"), ft.dropdown.Option("Minimizar")], value="Maximizar", width=150)
         
-        # Actualizar filas de restricción existentes
-        for row in restricciones_rows:
-            nuevo_input = ft.TextField(width=70, text_size=12, keyboard_type="number", bgcolor="white", content_padding=5, on_change=procesar_calculo)
-            row.insert(len(row)-2, nuevo_input)
-            
-        page.update()
-
-    # 3. Restricciones
-    col_restricciones = ft.Column(spacing=5)
-    def agregar_restriccion(e):
-        row = []
-        # Inputs para cada variable
-        for _ in range(len(obj_inputs)):
-            row.append(ft.TextField(width=70, text_size=12, keyboard_type="number", bgcolor="white", content_padding=5, on_change=procesar_calculo))
+        # Contenedores
+        row_vars = ft.Row(wrap=True)
+        col_rest = ft.Column()
         
-        # Signo y Límite
-        dd = ft.Dropdown(options=[ft.dropdown.Option("≤"), ft.dropdown.Option("≥"), ft.dropdown.Option("=")], value="≤", width=60, text_size=14, content_padding=0, bgcolor="#EEEEEE", on_change=procesar_calculo)
-        lim = ft.TextField(hint_text="Lim", width=70, text_size=12, keyboard_type="number", bgcolor="white", content_padding=5, on_change=procesar_calculo)
+        # Funciones UI
+        def add_var(e):
+            idx = len(obj_inputs)+1
+            inp = ft.TextField(label=f"C{idx}", width=70, keyboard_type="number")
+            obj_inputs.append(inp)
+            row_vars.controls.append(inp)
+            # Agregar col a restricciones
+            for r in restricciones_rows:
+                r.insert(len(r)-2, ft.TextField(width=70, keyboard_type="number"))
+            page.update()
+
+        def add_rest(e):
+            row = []
+            for _ in obj_inputs:
+                row.append(ft.TextField(width=70, keyboard_type="number"))
+            dd = ft.Dropdown(options=[ft.dropdown.Option("<="), ft.dropdown.Option(">=")], value="<=", width=70)
+            lim = ft.TextField(width=70, keyboard_type="number", hint_text="Lim")
+            row.append(dd)
+            row.append(lim)
+            restricciones_rows.append(row)
+            col_rest.controls.append(ft.Row([ft.Text(f"R{len(restricciones_rows)}")] + row, wrap=True))
+            page.update()
+
+        # Slider
+        slider = ft.Slider(min=0, max=500, value=100, label="{value}")
+        switch_slider = ft.Switch(label="Usar Slider en R1", value=False)
         
-        row.append(dd)
-        row.append(lim)
-        restricciones_rows.append(row)
+        # Botones
+        btn_calc = ft.ElevatedButton("CALCULAR", on_click=clic_calcular, bgcolor="blue", color="white", width=200)
         
-        # Renderizar visualmente
-        idx = len(restricciones_rows)
-        bg = C_SECONDARY if (idx==1 and switch_slider.value) else "transparent"
+        # Resultados
+        txt_res_z = ft.Text("Presiona Calcular", size=20, weight="bold")
+        txt_res_x = ft.Text("")
+        cont_res = ft.Container(content=ft.Column([txt_res_z, txt_res_x]), padding=10, border_radius=10, bgcolor="#F5F5F5")
         
-        item = ft.Container(
-            content=ft.Row([ft.Text(f"R{idx}", weight="bold", size=10, color="grey")] + row, wrap=True, spacing=5, alignment="center"),
-            bgcolor=bg, padding=5, border_radius=5
-        )
-        col_restricciones.controls.append(item)
-        page.update()
+        # Gráfico
+        cont_grafico = ft.Container(content=chart, height=300, visible=False)
+        
+        txt_error = ft.Text("", color="red", visible=False)
 
-    # 4. Panel Innovación (Slider)
-    slider_r1 = ft.Slider(min=0, max=500, divisions=50, value=100, label="{value}", active_color=C_PRIMARY, on_change=procesar_calculo)
-    switch_slider = ft.Switch(value=True, active_color=C_PRIMARY, on_change=procesar_calculo)
-    
-    panel_innovacion = ft.Container(
-        content=ft.Column([
-            ft.Row([ft.Icon(ft.icons.TOUCH_APP, color=C_PRIMARY, size=18), ft.Text("Análisis R1", color=C_PRIMARY, weight="bold")], spacing=5),
-            ft.Row([switch_slider, ft.Container(content=slider_r1, expand=True)], alignment="spaceBetween")
-        ]),
-        bgcolor=C_SECONDARY, padding=10, border_radius=10
-    )
-
-    # 5. Resultados
-    txt_estado = ft.Text("Esperando datos...", weight="bold")
-    txt_z = ft.Text("Z: ---", size=20, weight="bold")
-    txt_detalles = ft.Text("", size=12, color="grey")
-    
-    panel_resultados = ft.Container(
-        content=ft.Column([txt_estado, txt_z, txt_detalles], horizontal_alignment="center"),
-        bgcolor=C_BG_RES, padding=15, border_radius=10, width=350, border=ft.border.all(1, "transparent")
-    )
-    
-    # 6. Gráfico
-    contenedor_grafico = ft.Container(
-        content=ft.Column([
-            ft.Text("Gráfico de Región Factible", weight="bold", color=C_PRIMARY),
-            ft.Container(chart_obj, height=300, padding=10)
-        ], horizontal_alignment="center"),
-        visible=False,
-        padding=10, border=ft.border.all(1, "#E0E0E0"), border_radius=10
-    )
-
-    # Botones
-    btn_var = ft.ElevatedButton("+ Var", on_click=agregar_variable, bgcolor=C_PRIMARY, color="white")
-    btn_res = ft.ElevatedButton("+ Restricción", on_click=agregar_restriccion)
-
-    # LAYOUT FINAL
-    page.add(
-        ft.Column([
-            ft.Text("Solver Pro Mobile", size=24, weight="bold", color=C_PRIMARY),
-            ft.Row([dd_objetivo, btn_var], alignment="spaceBetween"),
-            ft.Container(cont_vars, padding=5),
-            ft.Divider(height=10, color="transparent"),
-            ft.Row([ft.Text("Restricciones", weight="bold"), btn_res], alignment="spaceBetween"),
-            col_restricciones,
+        # Armado
+        page.add(
+            ft.Text("Solver Seguro", size=25, weight="bold", color="blue"),
+            ft.Row([dd_obj, ft.ElevatedButton("+Var", on_click=add_var)]),
+            row_vars,
+            ft.Row([ft.Text("Restricciones"), ft.ElevatedButton("+Rest", on_click=add_rest)], alignment="spaceBetween"),
+            col_rest,
             ft.Divider(),
-            panel_innovacion,
-            ft.Divider(height=10, color="transparent"),
-            ft.Row([panel_resultados], alignment="center"),
-            contenedor_grafico
-        ], scroll="adaptive")
-    )
-    
-    # Inicialización por defecto
-    agregar_variable(None)
-    agregar_variable(None)
-    agregar_restriccion(None)
-    agregar_restriccion(None)
+            ft.Column([switch_slider, slider]),
+            ft.Divider(),
+            ft.Container(btn_calc, alignment=ft.alignment.center),
+            txt_error,
+            cont_res,
+            cont_grafico
+        )
+        
+        # Inicializar UI vacía
+        add_var(None)
+        add_var(None)
+        add_rest(None)
+        add_rest(None)
+
+    except Exception:
+        # PANTALLA ROJA DE LA MUERTE (Reporte de error)
+        page.clean()
+        page.add(
+            ft.Column([
+                ft.Text("ERROR FATAL AL INICIAR", color="red", size=20, weight="bold"),
+                ft.Text(traceback.format_exc(), color="black", size=10)
+            ], scroll="always")
+        )
 
 ft.app(target=main)
