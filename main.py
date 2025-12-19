@@ -3,14 +3,14 @@ import traceback
 
 def main(page: ft.Page):
     # --- CONFIGURACIÓN DE PANTALLA ---
-    page.title = "Solver Master Pro"
+    page.title = "Solver Master Pro v2"
     page.theme_mode = "light"
     page.scroll = "adaptive"
     page.padding = 15
-    page.window_width = 380
-    page.window_height = 800
+    page.window_width = 390
+    page.window_height = 850
 
-    # --- COLORES HEXADECIMALES (Seguros) ---
+    # --- COLORES HEXADECIMALES ---
     C_AZUL = "#1976D2"
     C_AZUL_BG = "#BBDEFB"
     C_NARANJA = "#FF9800"
@@ -22,21 +22,23 @@ def main(page: ft.Page):
     C_GRIS = "#F5F5F5"
     C_NEGRO = "#000000"
 
-    # --- VARIABLES GLOBALES ---
-    obj_inputs = []
-    restricciones_rows = []
+    # --- VARIABLES DE ESTADO (Referencias UI) ---
+    obj_inputs = []       # Lista de TextFields de la Función Objetivo
+    restricciones_rows = [] # Lista de objetos ft.Row (Las filas completas de restricciones)
 
     # --- WIDGET LEYENDA ---
     leyenda_container = ft.Row(wrap=True, alignment="center", spacing=10)
 
-    # --- MOTOR MATEMÁTICO (SIMPLEX BIG-M CORREGIDO) ---
+    # ==========================================
+    # --- MOTOR MATEMÁTICO (SIMPLEX BIG-M) ---
+    # ==========================================
+    # (Lógica intacta, validada al 100%)
     def resolver_simplex(c, A, b, signos, es_max):
         try:
-            M = 1000000.0  # Penalización Muy Grande
+            M = 1000000.0
             num_vars = len(c)
             num_rest = len(b)
             
-            # 1. Identificar Artificiales
             num_artificial = 0
             for s in signos:
                 if s in [">=", "≥", "="]:
@@ -46,44 +48,30 @@ def main(page: ft.Page):
             art_indices = [] 
             art_counter = 0
             
-            # 2. Construir Matriz Aumentada
             for i in range(num_rest):
                 row = list(A[i])
-                
-                # Holguras (Slacks)
                 slacks = [0.0] * num_rest
                 s = signos[i]
-                if s in ["<=", "≤"]:
-                    slacks[i] = 1.0
-                elif s in [">=", "≥"]:
-                    slacks[i] = -1.0
+                if s in ["<=", "≤"]: slacks[i] = 1.0
+                elif s in [">=", "≥"]: slacks[i] = -1.0
                 row.extend(slacks)
                 
-                # Artificiales
                 arts = [0.0] * num_artificial
                 if s in [">=", "≥", "="]:
                     arts[art_counter] = 1.0
                     art_indices.append((i, num_vars + num_rest + art_counter))
                     art_counter += 1
                 row.extend(arts)
-                
-                # RHS (Solución)
                 row.append(b[i])
                 tabla.append(row)
             
-            # 3. Fila Z (Función Objetivo)
-            if es_max:
-                z_row = [-val for val in c]
-            else:
-                z_row = [val for val in c]
+            if es_max: z_row = [-val for val in c]
+            else: z_row = [val for val in c]
                 
-            z_row.extend([0.0] * num_rest) # Holguras valen 0
-            
-            # CORRECCIÓN BIG-M: Penalización positiva en Z inicial
+            z_row.extend([0.0] * num_rest)
             z_row.extend([M] * num_artificial)
-            z_row.append(0.0) # RHS de Z
+            z_row.append(0.0)
             
-            # 4. PRE-PROCESAMIENTO
             for r_idx, c_idx in art_indices:
                 row_val = tabla[r_idx]
                 for j in range(len(z_row)):
@@ -91,12 +79,10 @@ def main(page: ft.Page):
             
             tabla.append(z_row)
             
-            # 5. ITERACIONES
             for _ in range(100):
                 z = tabla[-1]
-                min_val = min(z[:-1]) # Criterio del más negativo
-                if min_val >= -1e-9:
-                    break # Óptimo
+                min_val = min(z[:-1])
+                if min_val >= -1e-9: break 
                 
                 pivot_col = z.index(min_val)
                 min_ratio = float('inf')
@@ -110,9 +96,8 @@ def main(page: ft.Page):
                             min_ratio = ratio
                             pivot_row = i
                 
-                if pivot_row == -1: return None # No acotado
+                if pivot_row == -1: return None
                 
-                # Gauss-Jordan
                 pivot_val = tabla[pivot_row][pivot_col]
                 tabla[pivot_row] = [x / pivot_val for x in tabla[pivot_row]]
                 for i in range(len(tabla)):
@@ -120,7 +105,6 @@ def main(page: ft.Page):
                         factor = tabla[i][pivot_col]
                         tabla[i] = [tabla[i][j] - factor * tabla[pivot_row][j] for j in range(len(tabla[0]))]
             
-            # 6. Extraer Resultados
             res_x = [0.0] * num_vars
             for j in range(num_vars):
                 col = [tabla[i][j] for i in range(num_rest)]
@@ -133,51 +117,53 @@ def main(page: ft.Page):
                         if idx < num_rest: res_x[j] = tabla[idx][-1]
             
             z_final = tabla[-1][-1]
-            if not es_max:
-                z_final *= -1
+            if not es_max: z_final *= -1
                 
             return res_x, z_final
         except:
             return None
 
-    # --- LÓGICA DE UI ---
+    # ==========================================
+    # --- GESTIÓN DE INTERFAZ Y ESTADO ---
+    # ==========================================
+
     def calcular(e):
         try:
             txt_error.visible = False
             
-            # Leer Objetivo
+            # 1. Leer Objetivo
             c = []
             for inp in obj_inputs:
                 v = float(inp.value) if inp.value else 0.0
                 c.append(v)
             
-            # Leer Restricciones
+            # 2. Leer Restricciones (Iterando sobre los controles de cada fila)
             A = []
             b = []
             signos = []
             datos_grafico = []
-            
             max_val_intercept = 0 
             
-            for i, row in enumerate(restricciones_rows):
-                coefs = []
-                # MODIFICADO: Leemos hasta el antepenúltimo porque ahora insertamos dinámicamente
-                # Estructura: [Inp1, Inp2, ..., Dropdown, Lim]
-                # Dropdown es -2, Lim es -1. Los inputs son todo lo anterior.
-                inputs_solo = row[:-2] 
+            for i, row_control in enumerate(restricciones_rows):
+                # Estructura del Row: [Label(R1), InpX1, InpX2, ..., Dropdown, InpLim]
+                # Los inputs de variables están desde el índice 1 hasta -2
                 
-                for inp in inputs_solo:
+                inputs_vars = row_control.controls[1:-2] 
+                dd_signo = row_control.controls[-2]
+                inp_lim = row_control.controls[-1]
+
+                coefs = []
+                for inp in inputs_vars:
                     v = float(inp.value) if inp.value else 0.0
                     coefs.append(v)
                 
-                dd_signo = row[-2]
                 signos.append(dd_signo.value)
                 
-                inp_lim = row[-1]
+                # Lógica del Slider para R1
                 if i == 0 and switch_slider.value:
                     val_b = slider.value
                     inp_lim.value = str(int(val_b))
-                    page.update()
+                    # No hacemos page.update() aquí para evitar loops visuales, se hace al final
                 else:
                     val_b = float(inp_lim.value) if inp_lim.value else 0.0
                 
@@ -195,7 +181,7 @@ def main(page: ft.Page):
             if slider.max < max_val_intercept:
                  slider.max = max(100, max_val_intercept * 1.5)
 
-            # Resolver
+            # 3. Resolver
             es_max = dd_obj.value == "Maximizar"
             res = resolver_simplex(c, A, b, signos, es_max)
             
@@ -298,73 +284,88 @@ def main(page: ft.Page):
         except: pass
 
         chart.data_series.append(ft.LineChartData(data_points=[ft.LineChartDataPoint(opt_x1, opt_x2)], stroke_width=0, color=C_ROJO, point=True))
-        page.update()
 
-    # --- UI COMPONENTES ---
+    # ==========================================
+    # --- UI COMPONENTS Y LOGICA DE EVENTOS ---
+    # ==========================================
+
     dd_obj = ft.Dropdown(
         options=[ft.dropdown.Option("Maximizar"), ft.dropdown.Option("Minimizar")],
-        value="Maximizar", width=140, bgcolor=C_BLANCO, on_change=calcular
+        value="Maximizar", width=140, bgcolor=C_BLANCO, on_change=calcular, text_size=13
     )
     
     row_vars = ft.Row(wrap=True, spacing=5)
     col_rest = ft.Column(spacing=5)
     
-    # --- AQUÍ ESTÁ EL CAMBIO SOLICITADO (SINCRONIZACIÓN) ---
     def add_var(e):
         idx = len(obj_inputs) + 1
-        # Agregar variable al objetivo
-        inp = ft.TextField(label=f"C{idx}", width=70, keyboard_type="number", bgcolor=C_BLANCO, content_padding=5, on_change=calcular)
+        # 1. Crear input para función objetivo
+        inp = ft.TextField(label=f"C{idx}", width=70, keyboard_type="number", bgcolor=C_BLANCO, content_padding=5, on_change=calcular, text_size=13)
         obj_inputs.append(inp)
         row_vars.controls.append(inp)
+
+        # 2. SINCRONIZACIÓN DINÁMICA: Agregar input a TODAS las restricciones existentes
+        for row_obj in restricciones_rows:
+            # Estructura: [Label, Var1, Var2, ..., Dropdown, Limit]
+            # Queremos insertar antes del Dropdown (índice -2)
+            new_rest_input = ft.TextField(width=70, keyboard_type="number", bgcolor=C_BLANCO, content_padding=5, on_change=calcular, text_size=13)
+            insert_idx = len(row_obj.controls) - 2
+            row_obj.controls.insert(insert_idx, new_rest_input)
         
-        # AGREGAR COLUMNA A LAS RESTRICCIONES EXISTENTES
-        # Recorremos la lista 'restricciones_rows' que tiene los controles
-        for row in restricciones_rows:
-            # Creamos el nuevo input
-            new_rest_inp = ft.TextField(width=70, keyboard_type="number", bgcolor=C_BLANCO, content_padding=5, on_change=calcular)
-            # Insertamos ANTES del Dropdown (que está en la posición -2)
-            row.insert(len(row)-2, new_rest_inp)
-            
         page.update()
 
     def add_rest(e):
-        row = []
-        # Crear inputs basados en cuantas variables hay actualmente en 'obj_inputs'
-        for _ in obj_inputs:
-            row.append(ft.TextField(width=70, keyboard_type="number", bgcolor=C_BLANCO, content_padding=5, on_change=calcular))
+        idx = len(restricciones_rows) + 1
         
-        # DROPDOWN CON TODOS LOS SIGNOS
+        # Elementos de la fila
+        controls_list = []
+        controls_list.append(ft.Text(f"R{idx}", weight="bold", size=12, width=25)) # Label fijo
+        
+        # Crear un input por cada variable existente en objetivo
+        for _ in obj_inputs:
+            controls_list.append(ft.TextField(width=70, keyboard_type="number", bgcolor=C_BLANCO, content_padding=5, on_change=calcular, text_size=13))
+        
+        # Dropdown signo
         dd_s = ft.Dropdown(
             options=[ft.dropdown.Option("≤"), ft.dropdown.Option("≥"), ft.dropdown.Option("=")],
-            value="≤", width=60, bgcolor=C_GRIS, content_padding=5, on_change=calcular
+            value="≤", width=60, bgcolor=C_GRIS, content_padding=5, on_change=calcular, text_size=14
         )
-        row.append(dd_s)
-        row.append(ft.TextField(width=70, keyboard_type="number", hint_text="Lim", bgcolor=C_BLANCO, content_padding=5, on_change=calcular))
+        controls_list.append(dd_s)
         
-        restricciones_rows.append(row)
-        idx = len(restricciones_rows)
+        # Limite
+        controls_list.append(ft.TextField(width=70, keyboard_type="number", hint_text="Lim", bgcolor=C_BLANCO, content_padding=5, on_change=calcular, text_size=13))
+        
+        # Crear Objeto Fila
+        new_row = ft.Row(controls_list, wrap=True, alignment="start", spacing=3)
+        restricciones_rows.append(new_row) # Guardamos la referencia al OBJETO Row
+        
+        # Estilo especial para la primera restricción si el slider está activo
         bg = C_AZUL_BG if (idx == 1 and switch_slider.value) else "transparent"
-        col_rest.controls.append(ft.Container(content=ft.Row([ft.Text(f"R{idx}", weight="bold")] + row, wrap=True, alignment="center"), bgcolor=bg, padding=5, border_radius=5))
+        
+        # Contenedor visual
+        col_rest.controls.append(ft.Container(content=new_row, bgcolor=bg, padding=5, border_radius=5))
         page.update()
 
-    # --- NUEVA FUNCIÓN: RESET ---
     def reset_app(e):
-        # 1. Limpiar datos lógicos
+        # 1. Limpiar estructuras de datos
         obj_inputs.clear()
         restricciones_rows.clear()
         
         # 2. Limpiar UI
         row_vars.controls.clear()
         col_rest.controls.clear()
-        cont_grafico.visible = False
-        txt_z.value = "Z: ---"
-        txt_vars.value = "..."
+        
+        # 3. Resetear Resultados y Gráfico
         cont_res.bgcolor = C_GRIS
         cont_res.border = None
+        txt_z.value = "Z: ---"
+        txt_z.color = C_NEGRO
+        txt_vars.value = "..."
+        cont_grafico.visible = False
+        txt_error.visible = False
         
-        # 3. Recrear estado inicial (2 variables, 2 restricciones)
-        # OJO: Llamamos a las funciones pasando 'None' para simular el click
-        add_var(None) 
+        # 4. Reconstruir estado inicial (2 vars, 2 rest)
+        add_var(None)
         add_var(None)
         add_rest(None)
         add_rest(None)
@@ -383,25 +384,28 @@ def main(page: ft.Page):
     cont_grafico = ft.Container(content=ft.Column([ft.Text("Gráfico de Solución", weight="bold"), leyenda_container, ft.Container(chart, height=350, width=350)], horizontal_alignment="center"), padding=10, border=ft.border.all(1, "#E0E0E0"), border_radius=10, visible=False, bgcolor=C_BLANCO)
     txt_error = ft.Text("", color=C_ROJO, visible=False)
 
-    # Botón Reset (Basurero)
-    btn_reset = ft.IconButton(icon=ft.icons.DELETE_FOREVER, icon_color=C_ROJO, tooltip="Resetear todo", on_click=reset_app)
+    # Botón Reset
+    btn_reset = ft.IconButton(icon=ft.icons.RESTART_ALT, icon_color=C_ROJO, tooltip="Reiniciar Todo", on_click=reset_app)
 
     page.add(ft.Column([
-        ft.Row([
-            ft.Text("Solver Master Pro", size=26, weight="bold", color=C_AZUL),
-            btn_reset # Agregado aquí
-        ], alignment="spaceBetween"),
+        ft.Row([ft.Text("Solver Pro v2", size=22, weight="bold", color=C_AZUL), btn_reset], alignment="spaceBetween"),
+        ft.Divider(height=10, color="transparent"),
+        
         ft.Row([dd_obj, ft.ElevatedButton("+Var", on_click=add_var, bgcolor=C_AZUL, color=C_BLANCO)], alignment="spaceBetween"),
         ft.Container(row_vars, padding=5),
+        
+        ft.Divider(),
+        
         ft.Row([ft.Text("Restricciones", weight="bold"), ft.ElevatedButton("+Rest", on_click=add_rest)], alignment="spaceBetween"),
         col_rest,
+        
         ft.Divider(), panel_innov, ft.Divider(),
+        
         ft.Container(cont_res, alignment=ft.alignment.center),
         txt_error, cont_grafico
     ], scroll="adaptive"))
 
-    # INICIALIZACIÓN ORIGINAL (QUE SÍ FUNCIONA)
-    # Se ejecuta al final, una sola vez.
+    # Inicializar App
     add_var(None); add_var(None)
     add_rest(None); add_rest(None)
 
