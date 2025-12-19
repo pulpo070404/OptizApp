@@ -2,7 +2,6 @@ import flet as ft
 import traceback
 
 # --- MOTOR MATEMÁTICO (SIMPLEX BIG-M) ---
-# Se mantiene fuera del main para evitar redefiniciones
 def resolver_simplex(c, A, b, signos, es_max):
     try:
         M = 1000000.0
@@ -94,14 +93,13 @@ def resolver_simplex(c, A, b, signos, es_max):
         return None
 
 def main(page: ft.Page):
-    # BLOQUE TRY-EXCEPT GIGANTE PARA EVITAR PANTALLA NEGRA
+    # BLOQUE TRY-EXCEPT DE SEGURIDAD
     try:
         # --- CONFIGURACIÓN MÓVIL ---
         page.title = "Solver Pro"
         page.theme_mode = "light"
         page.scroll = "adaptive" 
         page.padding = 10
-        # En Android window_width/height se ignoran, pero definimos por seguridad
         
         # --- COLORES ---
         C_AZUL = "#1976D2"
@@ -122,13 +120,12 @@ def main(page: ft.Page):
         chart = ft.LineChart(
             data_series=[],
             border=ft.border.all(1, "#E0E0E0"),
-            min_y=0, min_x=0, expand=True, # Expand es clave en móviles
+            min_y=0, min_x=0, expand=True, 
             left_axis=ft.ChartAxis(labels_size=30, title=ft.Text("X2"), title_size=12),
             bottom_axis=ft.ChartAxis(labels_size=30, title=ft.Text("X1"), title_size=12),
             tooltip_bgcolor="#263238"
         )
 
-        # Definir componentes UI antes de las funciones
         dd_obj = ft.Dropdown(
             options=[ft.dropdown.Option("Maximizar"), ft.dropdown.Option("Minimizar")],
             value="Maximizar", width=140, bgcolor=C_BLANCO, text_size=14
@@ -137,7 +134,6 @@ def main(page: ft.Page):
         row_vars = ft.Row(wrap=True, spacing=5)
         col_rest = ft.Column(spacing=5)
         
-        # Contenedores de resultados
         cont_res = ft.Container(
             content=ft.Column([
                 txt_z := ft.Text("Z: ---", size=24, weight="bold"), 
@@ -146,12 +142,11 @@ def main(page: ft.Page):
             padding=15, border_radius=10, bgcolor=C_GRIS, width=350
         )
         
-        # Contenedor gráfico con altura fija para evitar colapso en scroll móvil
         cont_grafico = ft.Container(
             content=ft.Column([
                 ft.Text("Gráfico de Solución", weight="bold"), 
                 leyenda_container, 
-                ft.Container(chart, height=300, width=300) # Dimensiones explícitas para móvil
+                ft.Container(chart, height=300, width=300) 
             ], horizontal_alignment="center"), 
             padding=10, border=ft.border.all(1, "#E0E0E0"), 
             border_radius=10, visible=False, bgcolor=C_BLANCO
@@ -194,7 +189,6 @@ def main(page: ft.Page):
                         chart.data_series.append(ft.LineChartData(data_points=pts, stroke_width=3, color=color))
                         leyenda_container.controls.append(ft.Row([ft.Container(width=10, height=10, bgcolor=color), ft.Text(f"R{r['id']}", size=10)]))
 
-                # Graficar Solución
                 chart.data_series.append(ft.LineChartData(data_points=[ft.LineChartDataPoint(opt_x1, opt_x2)], stroke_width=0, color=C_ROJO, point=True))
             except: pass
 
@@ -225,7 +219,6 @@ def main(page: ft.Page):
                     else:
                         val_b = float(inp_lim.value) if inp_lim.value else 0.0
                     
-                    # Interceptar para ajustar slider
                     for coef in coefs:
                         if abs(coef) > 0.01: max_val_intercept = max(max_val_intercept, val_b/coef)
                     
@@ -257,7 +250,6 @@ def main(page: ft.Page):
                 txt_error.visible = True
             page.update()
 
-        # Vinculamos eventos a controles
         dd_obj.on_change = calcular
         
         def add_var(e):
@@ -310,11 +302,11 @@ def main(page: ft.Page):
                 ft.Row([switch_slider, ft.Container(slider, expand=True)], alignment="spaceBetween")
             ]), bgcolor=C_AZUL_BG, padding=10, border_radius=10)
 
-        btn_reset = ft.IconButton(icon=ft.icons.RESTART_ALT, icon_color=C_ROJO, on_click=reset_app)
+        # --- AQUI ESTABA EL ERROR, CORREGIDO "ft.Icons" CON MAYUSCULA ---
+        btn_reset = ft.IconButton(icon=ft.Icons.RESTART_ALT, icon_color=C_ROJO, on_click=reset_app)
 
-        # --- CONSTRUCCIÓN DEL LAYOUT PRINCIPAL ---
         page.add(ft.Column([
-            ft.Row([ft.Text("Solver Pro APK", size=20, weight="bold", color=C_AZUL), btn_reset], alignment="spaceBetween"),
+            ft.Row([ft.Text("Solver Pro", size=20, weight="bold", color=C_AZUL), btn_reset], alignment="spaceBetween"),
             ft.Row([dd_obj, ft.ElevatedButton("+Var", on_click=add_var, bgcolor=C_AZUL, color=C_BLANCO)], alignment="spaceBetween"),
             ft.Container(row_vars, padding=5),
             ft.Divider(),
@@ -324,16 +316,14 @@ def main(page: ft.Page):
             ft.Container(cont_res, alignment=ft.alignment.center),
             txt_error, 
             cont_grafico
-        ], scroll="adaptive")) # scroll="adaptive" es VITAL para móvil
+        ], scroll="adaptive"))
 
-        # Inicializar
         add_var(None); add_var(None)
         add_rest(None); add_rest(None)
     
     except Exception as e:
-        # SI ALGO FALLA AL INICIAR, MUESTRA ESTO EN LA PANTALLA DEL MÓVIL
         page.clean()
-        page.add(ft.Text(f"ERROR FATAL DE INICIO:\n{traceback.format_exc()}", color="red", size=14, selectable=True))
+        page.add(ft.Text(f"ERROR FATAL:\n{traceback.format_exc()}", color="red", size=14, selectable=True))
         page.update()
 
 ft.app(target=main)
