@@ -2,7 +2,7 @@ import flet as ft
 import traceback
 
 def main(page: ft.Page):
-    # --- CONFIGURACIÓN SEGURA ---
+    # --- CONFIGURACIÓN ---
     page.title = "Solver Master Pro"
     page.theme_mode = "light"
     page.scroll = "adaptive"
@@ -10,7 +10,7 @@ def main(page: ft.Page):
     page.window_width = 380
     page.window_height = 800
 
-    # --- COLORES (HEX) ---
+    # --- COLORES ---
     C_AZUL = "#1976D2"
     C_AZUL_BG = "#BBDEFB"
     C_VERDE = "#388E3C"
@@ -20,21 +20,14 @@ def main(page: ft.Page):
     C_GRIS = "#F5F5F5"
     C_BLANCO = "#FFFFFF"
 
-    # --- CONTENEDORES UI (Estado Visual) ---
-    # Usaremos los contenedores como la "memoria" de la app
-    # para evitar desincronización entre listas y pantalla.
-    cont_objetivo = ft.Row(wrap=True, spacing=5)
-    cont_restricciones = ft.Column(spacing=5)
-    leyenda_container = ft.Row(wrap=True, alignment="center", spacing=10)
-
-    # --- MOTOR MATEMÁTICO (Big-M Probado) ---
+    # --- MOTOR MATEMÁTICO (SIMPLEX BIG-M CONFIRMADO) ---
     def resolver_simplex(c, A, b, signos, es_max):
         try:
             M = 1000000.0
             num_vars = len(c)
             num_rest = len(b)
             
-            # Contar artificiales
+            # Contar Artificiales
             num_art = 0
             for s in signos:
                 if s in [">=", "≥", "="]: num_art += 1
@@ -43,7 +36,7 @@ def main(page: ft.Page):
             art_indices = []
             art_count = 0
             
-            # Construir filas
+            # Construir Matriz
             for i in range(num_rest):
                 row = list(A[i])
                 # Holguras
@@ -58,7 +51,6 @@ def main(page: ft.Page):
                     art_indices.append((i, num_vars + num_rest + art_count))
                     art_count += 1
                 row.extend(arts)
-                # RHS
                 row.append(b[i])
                 tabla.append(row)
             
@@ -67,11 +59,11 @@ def main(page: ft.Page):
             else: z_row = [x for x in c]
             
             z_row.extend([0.0]*num_rest)
-            z_row.extend([M]*num_art) # Penalización
+            z_row.extend([M]*num_art)
             z_row.append(0.0)
             
-            # Ajuste Big-M
-            for r_idx, col_idx in art_indices:
+            # Ajuste Big-M (Resta)
+            for r_idx, _ in art_indices:
                 row_val = tabla[r_idx]
                 for j in range(len(z_row)):
                     z_row[j] -= M * row_val[j]
@@ -123,90 +115,46 @@ def main(page: ft.Page):
         except:
             return None
 
-    # --- GRÁFICO ---
-    chart = ft.LineChart(
-        data_series=[], border=ft.border.all(1, "#E0E0E0"),
-        min_y=0, min_x=0, expand=True,
-        left_axis=ft.ChartAxis(labels_size=30, title=ft.Text("X2"), title_size=15),
-        bottom_axis=ft.ChartAxis(labels_size=30, title=ft.Text("X1"), title_size=15),
-        tooltip_bgcolor="#263238"
-    )
+    # --- VARIABLES DE ESTADO UI ---
+    # Contenedores vacíos al inicio
+    cont_objetivo = ft.Row(wrap=True, spacing=5)
+    cont_restricciones = ft.Column(spacing=5)
+    leyenda_container = ft.Row(wrap=True, alignment="center", spacing=10)
 
-    def dibujar(restricciones, x1, x2, c, z):
-        chart.data_series = []
-        leyenda_container.controls = []
-        max_c = max(x1, x2, 10)
-        # Buscar escala máxima
-        for r in restricciones:
-            a1, a2 = r['a']
-            b = r['b']
-            if abs(a1) > 0.01: max_c = max(max_c, b/a1)
-            if abs(a2) > 0.01: max_c = max(max_c, b/a2)
-        
-        lim = max_c * 1.2
-        chart.max_x = lim
-        chart.max_y = lim
-        
-        cols = [C_AZUL, "#FF9800", "#9C27B0", "#009688"]
-        bg_cols = [C_AZUL_BG, "#FFE0B2", "#E1BEE7", "#B2DFDB"]
-        
-        for i, r in enumerate(restricciones):
-            a1, a2 = r['a']
-            b = r['b']
-            pts = []
-            if abs(a2)<0.01 and abs(a1)>0.01: pts = [ft.LineChartDataPoint(b/a1,0), ft.LineChartDataPoint(b/a1,lim)]
-            elif abs(a1)<0.01 and abs(a2)>0.01: pts = [ft.LineChartDataPoint(0,b/a2), ft.LineChartDataPoint(lim,b/a2)]
-            elif abs(a1)>0.01 and abs(a2)>0.01: pts = [ft.LineChartDataPoint(0,b/a2), ft.LineChartDataPoint(b/a1,0)]
-            
-            if pts:
-                chart.data_series.append(ft.LineChartData(
-                    data_points=pts, stroke_width=3, color=cols[i%4], curved=False,
-                    below_line_bgcolor=bg_cols[i%4]
-                ))
-                leyenda_container.controls.append(ft.Row([
-                    ft.Container(width=10, height=10, bgcolor=cols[i%4]), ft.Text(f"R{r['id']}")
-                ], spacing=2))
-
-        # Punto
-        chart.data_series.append(ft.LineChartData(
-            data_points=[ft.LineChartDataPoint(x1, x2)], stroke_width=0, color=C_ROJO, point=True
-        ))
-        page.update()
-
-    # --- LÓGICA DE UI (SINCRONIZADA) ---
+    # --- UI HELPERS (Funciones para calcular) ---
     def calcular(e):
         try:
             txt_err.visible = False
             
-            # 1. Leer Objetivos (desde UI)
+            # 1. Leer Objetivo
             c = []
             for ctrl in cont_objetivo.controls:
-                val = float(ctrl.value) if ctrl.value else 0.0
-                c.append(val)
+                v = float(ctrl.value) if ctrl.value else 0.0
+                c.append(v)
             
-            # 2. Leer Restricciones (desde UI)
+            # 2. Leer Restricciones
             A = []
             b = []
             signos = []
             datos_graf = []
             max_int = 0
             
-            # Iteramos sobre los contenedores visuales
             for i, row_cont in enumerate(cont_restricciones.controls):
-                row = row_cont.content.controls # Lista de controles en la fila
-                # Estructura: [Label, Input1, Input2..., Dropdown, Limit]
+                row = row_cont.content.controls
+                # Estructura: [Label, Inp1, Inp2..., Dropdown, Limite]
                 
                 coefs = []
-                inputs = row[1:-2] # Saltamos Label y los ultimos 2
+                # Los inputs están entre el Label (0) y los ultimos 2
+                inputs = row[1:-2]
                 for inp in inputs:
-                    val = float(inp.value) if inp.value else 0.0
-                    coefs.append(val)
+                    v = float(inp.value) if inp.value else 0.0
+                    coefs.append(v)
                 
                 dd = row[-2]
                 lim = row[-1]
                 signos.append(dd.value)
                 
-                # Slider R1
+                # Slider Logic
                 if i == 0 and sw_slider.value:
                     val_b = slider.value
                     lim.value = str(int(val_b))
@@ -214,14 +162,14 @@ def main(page: ft.Page):
                 else:
                     val_b = float(lim.value) if lim.value else 0.0
                 
-                # Escala Slider
                 for co in coefs:
                     if abs(co) > 0.01: max_int = max(max_int, val_b/co)
                 
                 A.append(coefs)
                 b.append(val_b)
-                if len(c)==2: datos_graf.append({'a':coefs, 'b':val_b, 'id':i+1})
+                if len(c) == 2: datos_graf.append({'a':coefs, 'b':val_b, 'id':i+1})
             
+            # Ajustar Slider
             if slider.max < max_int: slider.max = max(100, max_int*1.5)
             
             # Resolver
@@ -237,7 +185,7 @@ def main(page: ft.Page):
                 txt_vars.value = " | ".join([f"X{k+1}={v:.2f}" for k,v in enumerate(sx)])
                 
                 if len(c) == 2:
-                    dibujar(datos_graf, sx[0], sx[1], c, sz)
+                    dibujar_grafico(datos_graf, sx[0], sx[1], c, sz)
                     cont_graf.visible = True
                 else:
                     cont_graf.visible = False
@@ -246,7 +194,7 @@ def main(page: ft.Page):
                 panel_res.border = ft.border.all(1, C_ROJO)
                 txt_z.value = "Sin Solución"
                 txt_z.color = C_ROJO
-                txt_vars.value = "Inconsistente"
+                txt_vars.value = "Datos no factibles"
                 cont_graf.visible = False
                 
         except Exception as ex:
@@ -254,101 +202,129 @@ def main(page: ft.Page):
             txt_err.visible = True
         page.update()
 
-    # --- ACCIONES DINÁMICAS ---
-    def add_var(e):
-        # Agregar a Objetivo
-        idx = len(cont_objetivo.controls) + 1
-        cont_objetivo.controls.append(ft.TextField(
-            label=f"C{idx}", width=70, keyboard_type="number", 
-            bgcolor=C_BLANCO, content_padding=5, on_change=calcular
-        ))
+    # --- GRÁFICO ---
+    chart = ft.LineChart(
+        data_series=[], border=ft.border.all(1, "#E0E0E0"),
+        min_y=0, min_x=0, expand=True,
+        left_axis=ft.ChartAxis(labels_size=30, title=ft.Text("X2"), title_size=15),
+        bottom_axis=ft.ChartAxis(labels_size=30, title=ft.Text("X1"), title_size=15),
+        tooltip_bgcolor="#263238"
+    )
+
+    def dibujar_grafico(restricciones, x1, x2, c, z):
+        chart.data_series = []
+        leyenda_container.controls = []
+        mc = max(x1, x2, 10)
+        for r in restricciones:
+            a1,a2=r['a']; b=r['b']
+            if abs(a1)>0.01: mc = max(mc, b/a1)
+            if abs(a2)>0.01: mc = max(mc, b/a2)
         
-        # Agregar a TODAS las restricciones existentes (Sincronización)
+        lim = mc * 1.2
+        chart.max_x = lim
+        chart.max_y = lim
+        
+        cols = [C_AZUL, "#FF9800", "#9C27B0", "#009688"]
+        bg_cols = [C_AZUL_BG, "#FFE0B2", "#E1BEE7", "#B2DFDB"]
+        
+        for i, r in enumerate(restricciones):
+            a1, a2 = r['a']; b = r['b']
+            pts = []
+            if abs(a2)<0.01 and abs(a1)>0.01: pts = [ft.LineChartDataPoint(b/a1,0), ft.LineChartDataPoint(b/a1,lim)]
+            elif abs(a1)<0.01 and abs(a2)>0.01: pts = [ft.LineChartDataPoint(0,b/a2), ft.LineChartDataPoint(lim,b/a2)]
+            elif abs(a1)>0.01 and abs(a2)>0.01: pts = [ft.LineChartDataPoint(0,b/a2), ft.LineChartDataPoint(b/a1,0)]
+            
+            if pts:
+                chart.data_series.append(ft.LineChartData(data_points=pts, stroke_width=3, color=cols[i%4], curved=False, below_line_bgcolor=bg_cols[i%4]))
+                leyenda_container.controls.append(ft.Row([ft.Container(width=10,height=10,bgcolor=cols[i%4]), ft.Text(f"R{r['id']}")], spacing=2))
+        
+        chart.data_series.append(ft.LineChartData(data_points=[ft.LineChartDataPoint(x1,x2)], stroke_width=0, color=C_ROJO, point=True))
+        page.update()
+
+    # --- ACCIONES DE USUARIO ---
+    
+    def crear_input_base():
+        return ft.TextField(width=70, keyboard_type="number", bgcolor=C_BLANCO, content_padding=5, on_change=calcular)
+
+    def btn_add_var_click(e):
+        # 1. Agregar a Objetivo
+        idx = len(cont_objetivo.controls) + 1
+        cont_objetivo.controls.append(ft.TextField(label=f"C{idx}", width=70, keyboard_type="number", bgcolor=C_BLANCO, content_padding=5, on_change=calcular))
+        
+        # 2. Agregar a TODAS las Restricciones
         for row_cont in cont_restricciones.controls:
             row = row_cont.content.controls
-            # Insertar antes del dropdown (index -2)
-            row.insert(len(row)-2, ft.TextField(
-                width=70, keyboard_type="number", bgcolor=C_BLANCO, 
-                content_padding=5, on_change=calcular
-            ))
+            # Insertar antes del dropdown (posicion -2)
+            row.insert(len(row)-2, crear_input_base())
+            
         page.update()
 
-    def add_rest(e):
+    def btn_add_rest_click(e):
         idx = len(cont_restricciones.controls) + 1
-        row = [ft.Text(f"R{idx}", weight="bold")]
+        row_items = [ft.Text(f"R{idx}", weight="bold")]
         
-        # Crear inputs según variables actuales
-        num_vars = len(cont_objetivo.controls)
-        for _ in range(num_vars):
-            row.append(ft.TextField(
-                width=70, keyboard_type="number", bgcolor=C_BLANCO, 
-                content_padding=5, on_change=calcular
-            ))
+        # Un input por cada variable existente
+        for _ in range(len(cont_objetivo.controls)):
+            row_items.append(crear_input_base())
             
-        # Dropdown y Limite
-        row.append(ft.Dropdown(
-            options=[ft.dropdown.Option("≤"), ft.dropdown.Option("≥"), ft.dropdown.Option("=")],
-            value="≤", width=60, bgcolor=C_GRIS, content_padding=5, on_change=calcular
-        ))
-        row.append(ft.TextField(
-            width=70, keyboard_type="number", hint_text="Lim", 
-            bgcolor=C_BLANCO, content_padding=5, on_change=calcular
-        ))
+        row_items.append(ft.Dropdown(options=[ft.dropdown.Option("≤"), ft.dropdown.Option("≥"), ft.dropdown.Option("=")], value="≤", width=60, bgcolor=C_GRIS, content_padding=5, on_change=calcular))
+        row_items.append(ft.TextField(width=70, keyboard_type="number", hint_text="Lim", bgcolor=C_BLANCO, content_padding=5, on_change=calcular))
         
         bg = C_AZUL_BG if (idx==1 and sw_slider.value) else "transparent"
-        cont_restricciones.controls.append(ft.Container(
-            content=ft.Row(row, wrap=True, alignment="center"),
-            bgcolor=bg, padding=5, border_radius=5
-        ))
+        cont_restricciones.controls.append(ft.Container(content=ft.Row(row_items, wrap=True, alignment="center"), bgcolor=bg, padding=5, border_radius=5))
         page.update()
 
-    def reset_all(e):
+    def btn_reset_click(e):
+        # Borrar todo
         cont_objetivo.controls.clear()
         cont_restricciones.controls.clear()
+        
+        # Reiniciar a 2 variables
+        for i in range(2):
+            cont_objetivo.controls.append(ft.TextField(label=f"C{i+1}", width=70, keyboard_type="number", bgcolor=C_BLANCO, content_padding=5, on_change=calcular))
+            
+        # Reiniciar a 2 restricciones
+        for i in range(2):
+            row_items = [ft.Text(f"R{i+1}", weight="bold")]
+            for _ in range(2): row_items.append(crear_input_base())
+            row_items.append(ft.Dropdown(options=[ft.dropdown.Option("≤"), ft.dropdown.Option("≥"), ft.dropdown.Option("=")], value="≤", width=60, bgcolor=C_GRIS, content_padding=5, on_change=calcular))
+            row_items.append(ft.TextField(width=70, keyboard_type="number", hint_text="Lim", bgcolor=C_BLANCO, content_padding=5, on_change=calcular))
+            
+            bg = C_AZUL_BG if i==0 else "transparent"
+            cont_restricciones.controls.append(ft.Container(content=ft.Row(row_items, wrap=True, alignment="center"), bgcolor=bg, padding=5, border_radius=5))
+        
+        # Limpiar resultados
         cont_graf.visible = False
         txt_z.value = "Z: ---"
         txt_vars.value = "..."
         panel_res.bgcolor = C_GRIS
         panel_res.border = None
         
-        # Reiniciar a 2 vars / 2 rest
-        crear_inicio()
         page.update()
 
-    def crear_inicio():
-        # Crear 2 variables
-        for i in range(2):
-            cont_objetivo.controls.append(ft.TextField(
-                label=f"C{i+1}", width=70, keyboard_type="number", 
-                bgcolor=C_BLANCO, content_padding=5, on_change=calcular
-            ))
-        # Crear 2 restricciones
-        for i in range(2):
-            row = [ft.Text(f"R{i+1}", weight="bold")]
-            for _ in range(2): # 2 inputs
-                row.append(ft.TextField(width=70, keyboard_type="number", bgcolor=C_BLANCO, content_padding=5, on_change=calcular))
-            
-            row.append(ft.Dropdown(options=[ft.dropdown.Option("≤"), ft.dropdown.Option("≥"), ft.dropdown.Option("=")], value="≤", width=60, bgcolor=C_GRIS, content_padding=5, on_change=calcular))
-            row.append(ft.TextField(width=70, keyboard_type="number", hint_text="Lim", bgcolor=C_BLANCO, content_padding=5, on_change=calcular))
-            
-            bg = C_AZUL_BG if i==0 else "transparent"
-            cont_restricciones.controls.append(ft.Container(
-                content=ft.Row(row, wrap=True, alignment="center"),
-                bgcolor=bg, padding=5, border_radius=5
-            ))
+    # --- INICIALIZACIÓN SEGURA (Sin page.update) ---
+    # Esto construye la UI inicial EN MEMORIA antes de que arranque la app.
+    
+    # 2 Variables iniciales
+    for i in range(2):
+        cont_objetivo.controls.append(ft.TextField(label=f"C{i+1}", width=70, keyboard_type="number", bgcolor=C_BLANCO, content_padding=5, on_change=calcular))
+        
+    # 2 Restricciones iniciales
+    for i in range(2):
+        row_items = [ft.Text(f"R{i+1}", weight="bold")]
+        for _ in range(2): row_items.append(crear_input_base())
+        row_items.append(ft.Dropdown(options=[ft.dropdown.Option("≤"), ft.dropdown.Option("≥"), ft.dropdown.Option("=")], value="≤", width=60, bgcolor=C_GRIS, content_padding=5, on_change=calcular))
+        row_items.append(ft.TextField(width=70, keyboard_type="number", hint_text="Lim", bgcolor=C_BLANCO, content_padding=5, on_change=calcular))
+        
+        bg = C_AZUL_BG if i==0 else "transparent"
+        cont_restricciones.controls.append(ft.Container(content=ft.Row(row_items, wrap=True, alignment="center"), bgcolor=bg, padding=5, border_radius=5))
 
-    # --- LAYOUT ---
+    # --- COMPONENTES UI ---
     dd_obj = ft.Dropdown(options=[ft.dropdown.Option("Maximizar"), ft.dropdown.Option("Minimizar")], value="Maximizar", width=140, bgcolor=C_BLANCO, on_change=calcular)
     
-    # Slider
     slider = ft.Slider(min=0, max=500, value=100, divisions=100, active_color=C_AZUL, on_change=calcular)
     sw_slider = ft.Switch(value=True, active_color=C_AZUL, on_change=calcular)
-    panel_innov = ft.Container(content=ft.Column([
-        ft.Row([ft.Icon(ft.icons.TOUCH_APP, color=C_AZUL), ft.Text("Análisis R1", color=C_AZUL, weight="bold")]),
-        ft.Row([sw_slider, ft.Container(slider, expand=True)], alignment="spaceBetween")
-    ]), bgcolor=C_AZUL_BG, padding=10, border_radius=10)
-
-    # Resultados
+    
     panel_res = ft.Container(content=ft.Column([
         txt_z := ft.Text("Z: ---", size=24, weight="bold"),
         txt_vars := ft.Text("...", size=14)
@@ -361,17 +337,20 @@ def main(page: ft.Page):
     
     txt_err = ft.Text("", color=C_ROJO, visible=False)
 
-    # Construcción Inicial
-    crear_inicio()
-
+    # --- LAYOUT PRINCIPAL ---
     page.add(ft.Column([
         ft.Row([ft.Text("Solver Master Pro", size=26, weight="bold", color=C_AZUL),
-                ft.IconButton(ft.icons.DELETE, icon_color=C_ROJO, on_click=reset_all)], alignment="spaceBetween"),
-        ft.Row([dd_obj, ft.ElevatedButton("+Var", on_click=add_var, bgcolor=C_AZUL, color=C_BLANCO)], alignment="spaceBetween"),
+                ft.IconButton(ft.icons.DELETE, icon_color=C_ROJO, on_click=btn_reset_click)], alignment="spaceBetween"),
+        ft.Row([dd_obj, ft.ElevatedButton("+Var", on_click=btn_add_var_click, bgcolor=C_AZUL, color=C_BLANCO)], alignment="spaceBetween"),
         ft.Container(cont_objetivo, padding=5),
-        ft.Row([ft.Text("Restricciones", weight="bold"), ft.ElevatedButton("+Rest", on_click=add_rest)], alignment="spaceBetween"),
+        ft.Row([ft.Text("Restricciones", weight="bold"), ft.ElevatedButton("+Rest", on_click=btn_add_rest_click)], alignment="spaceBetween"),
         cont_restricciones,
-        ft.Divider(), panel_innov, ft.Divider(),
+        ft.Divider(),
+        ft.Container(content=ft.Column([
+            ft.Row([ft.Icon(ft.icons.TOUCH_APP, color=C_AZUL), ft.Text("Análisis R1", color=C_AZUL, weight="bold")]),
+            ft.Row([sw_slider, ft.Container(slider, expand=True)], alignment="spaceBetween")
+        ]), bgcolor=C_AZUL_BG, padding=10, border_radius=10),
+        ft.Divider(),
         ft.Container(panel_res, alignment=ft.alignment.center),
         txt_err, cont_graf
     ], scroll="adaptive"))
