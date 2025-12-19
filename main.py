@@ -93,9 +93,8 @@ def resolver_simplex(c, A, b, signos, es_max):
         return None
 
 def main(page: ft.Page):
-    # BLOQUE TRY-EXCEPT DE SEGURIDAD
     try:
-        # --- CONFIGURACIÓN MÓVIL ---
+        # --- CONFIGURACIÓN UI ---
         page.title = "Solver Pro"
         page.theme_mode = "light"
         page.scroll = "adaptive" 
@@ -110,22 +109,130 @@ def main(page: ft.Page):
         C_BLANCO = "#FFFFFF"
         C_GRIS = "#F5F5F5"
         
+        # Colores para gráfico (Línea, Fondo)
+        GRAPH_COLORS = [
+            (C_AZUL, C_AZUL_BG),
+            ("#FF9800", "#FFE0B2"), # Naranja
+            ("#9C27B0", "#E1BEE7"), # Morado
+            ("#009688", "#B2DFDB")  # Verde Azulado
+        ]
+
         # --- ESTADO ---
         obj_inputs = []       
         restricciones_rows = [] 
 
-        # --- COMPONENTES ---
+        # --- COMPONENTES GRÁFICOS ---
         leyenda_container = ft.Row(wrap=True, alignment="center", spacing=10)
         
         chart = ft.LineChart(
             data_series=[],
             border=ft.border.all(1, "#E0E0E0"),
-            min_y=0, min_x=0, expand=True, 
+            min_y=0, min_x=0, expand=True,
             left_axis=ft.ChartAxis(labels_size=30, title=ft.Text("X2"), title_size=12),
             bottom_axis=ft.ChartAxis(labels_size=30, title=ft.Text("X1"), title_size=12),
             tooltip_bgcolor="#263238"
         )
 
+        # --- FUNCIONES DE DIBUJO AVANZADO ---
+        def dibujar_grafico(restricciones, opt_x1, opt_x2, c, z_val):
+            try:
+                chart.data_series = []
+                leyenda_container.controls = []
+                
+                # 1. Calcular escala del gráfico
+                max_coord = 0
+                for r in restricciones:
+                    a1, a2 = r['a']
+                    b = r['b']
+                    # Evitar division por cero
+                    if abs(a1) > 0.01: max_coord = max(max_coord, b/a1)
+                    if abs(a2) > 0.01: max_coord = max(max_coord, b/a2)
+                
+                max_coord = max(max_coord, opt_x1, opt_x2)
+                limit = max(10, max_coord * 1.3) # 30% de margen
+                chart.max_x = limit
+                chart.max_y = limit
+
+                # 2. Dibujar Restricciones (Con sombreado)
+                for idx, r in enumerate(restricciones):
+                    a1, a2 = r['a']
+                    b = r['b']
+                    # Ciclo de colores
+                    color_linea, color_fondo = GRAPH_COLORS[idx % len(GRAPH_COLORS)]
+                    
+                    pts = []
+                    # Caso: Corte en ambos ejes
+                    if abs(a1) > 0.01 and abs(a2) > 0.01:
+                        pts = [ft.LineChartDataPoint(0, b/a2), ft.LineChartDataPoint(b/a1, 0)]
+                    # Caso: Horizontal (solo corta X2)
+                    elif abs(a1) < 0.01 and abs(a2) > 0.01: 
+                        val = b/a2
+                        pts = [ft.LineChartDataPoint(0, val), ft.LineChartDataPoint(limit, val)]
+                    # Caso: Vertical (solo corta X1)
+                    elif abs(a2) < 0.01 and abs(a1) > 0.01: 
+                        val = b/a1
+                        pts = [ft.LineChartDataPoint(val, 0), ft.LineChartDataPoint(val, limit)]
+                    
+                    if pts:
+                        chart.data_series.append(
+                            ft.LineChartData(
+                                data_points=pts, 
+                                stroke_width=3, 
+                                color=color_linea,
+                                below_line_bgcolor=color_fondo, # <--- AQUÍ ESTÁ EL SOMBREADO
+                                curved=False
+                            )
+                        )
+                        # Agregar a Leyenda
+                        leyenda_container.controls.append(
+                            ft.Row([
+                                ft.Container(width=12, height=12, bgcolor=color_linea, border_radius=2),
+                                ft.Text(f"R{r['id']}", size=12, weight="bold")
+                            ], spacing=2)
+                        )
+
+                # 3. Dibujar Línea Z (Objetivo) - Punteada Roja
+                try:
+                    c1, c2 = c[0], c[1]
+                    # Solo dibujar si tiene pendiente (ambos coefs existen)
+                    if abs(c1) > 0.01 and abs(c2) > 0.01:
+                        # Ecuación Z: c1*x + c2*y = Z_opt
+                        # Puntos de corte: (0, Z/c2) y (Z/c1, 0)
+                        z_pts = [
+                            ft.LineChartDataPoint(0, z_val/c2),
+                            ft.LineChartDataPoint(z_val/c1, 0)
+                        ]
+                        chart.data_series.append(
+                            ft.LineChartData(
+                                data_points=z_pts, 
+                                stroke_width=2, 
+                                color=C_ROJO, 
+                                dash_pattern=[5, 5] # <--- LÍNEA PUNTEADA
+                            )
+                        )
+                        leyenda_container.controls.append(
+                            ft.Row([
+                                ft.Container(width=12, height=2, bgcolor=C_ROJO),
+                                ft.Text("Z (Obj)", size=12, color=C_ROJO, weight="bold")
+                            ], spacing=2)
+                        )
+                except: pass
+
+                # 4. Dibujar Punto Óptimo
+                chart.data_series.append(
+                    ft.LineChartData(
+                        data_points=[ft.LineChartDataPoint(opt_x1, opt_x2)], 
+                        stroke_width=0, 
+                        color=C_ROJO, 
+                        point=True,
+                        tooltip="Solución Óptima"
+                    )
+                )
+                
+            except Exception as e:
+                print(f"Error dibujo: {e}")
+
+        # --- CONTROLES DE INTERFAZ ---
         dd_obj = ft.Dropdown(
             options=[ft.dropdown.Option("Maximizar"), ft.dropdown.Option("Minimizar")],
             value="Maximizar", width=140, bgcolor=C_BLANCO, text_size=14
@@ -146,7 +253,7 @@ def main(page: ft.Page):
             content=ft.Column([
                 ft.Text("Gráfico de Solución", weight="bold"), 
                 leyenda_container, 
-                ft.Container(chart, height=300, width=300) 
+                ft.Container(chart, height=350, width=320) 
             ], horizontal_alignment="center"), 
             padding=10, border=ft.border.all(1, "#E0E0E0"), 
             border_radius=10, visible=False, bgcolor=C_BLANCO
@@ -154,51 +261,16 @@ def main(page: ft.Page):
         
         txt_error = ft.Text("", color=C_ROJO, visible=False)
 
-        # --- FUNCIONES DE DIBUJO ---
-        def dibujar_grafico(restricciones, opt_x1, opt_x2, c, z_val):
-            try:
-                chart.data_series = []
-                leyenda_container.controls = []
-                
-                max_coord = 0
-                for r in restricciones:
-                    a1, a2 = r['a']
-                    b = r['b']
-                    if abs(a1) > 0.01: max_coord = max(max_coord, b/a1)
-                    if abs(a2) > 0.01: max_coord = max(max_coord, b/a2)
-                
-                max_coord = max(max_coord, opt_x1, opt_x2)
-                limit = max(10, max_coord * 1.2)
-                chart.max_x = limit; chart.max_y = limit
-                
-                colores = [C_AZUL, "#FF9800", "#9C27B0", "#009688"]
-                
-                for idx, r in enumerate(restricciones):
-                    a1, a2 = r['a']; b = r['b']
-                    color = colores[idx % 4]
-                    
-                    pts = []
-                    if abs(a2) < 0.01 and abs(a1) > 0.01: 
-                        val = b/a1; pts = [ft.LineChartDataPoint(val, 0), ft.LineChartDataPoint(val, limit)]
-                    elif abs(a1) < 0.01 and abs(a2) > 0.01: 
-                        val = b/a2; pts = [ft.LineChartDataPoint(0, val), ft.LineChartDataPoint(limit, val)]
-                    elif abs(a1) > 0.01 and abs(a2) > 0.01:
-                        pts = [ft.LineChartDataPoint(0, b/a2), ft.LineChartDataPoint(b/a1, 0)]
-                    
-                    if pts:
-                        chart.data_series.append(ft.LineChartData(data_points=pts, stroke_width=3, color=color))
-                        leyenda_container.controls.append(ft.Row([ft.Container(width=10, height=10, bgcolor=color), ft.Text(f"R{r['id']}", size=10)]))
-
-                chart.data_series.append(ft.LineChartData(data_points=[ft.LineChartDataPoint(opt_x1, opt_x2)], stroke_width=0, color=C_ROJO, point=True))
-            except: pass
-
+        # --- LÓGICA PRINCIPAL ---
         def calcular(e):
             try:
                 txt_error.visible = False
+                # Leer Objetivo
                 c = []
                 for inp in obj_inputs:
                     c.append(float(inp.value) if inp.value else 0.0)
                 
+                # Leer Restricciones
                 A = []; b = []; signos = []; datos_grafico = []
                 max_val_intercept = 0 
                 
@@ -213,20 +285,25 @@ def main(page: ft.Page):
                     
                     signos.append(dd_signo.value)
                     
+                    # Slider
                     if i == 0 and switch_slider.value:
                         val_b = slider.value
                         inp_lim.value = str(int(val_b))
                     else:
                         val_b = float(inp_lim.value) if inp_lim.value else 0.0
                     
+                    # Calcular intercepción para slider
                     for coef in coefs:
                         if abs(coef) > 0.01: max_val_intercept = max(max_val_intercept, val_b/coef)
                     
                     A.append(coefs); b.append(val_b)
+                    # Guardar datos para grafico si son 2 variables
                     if len(c) == 2: datos_grafico.append({'a': coefs, 'b': val_b, 'id': i+1})
 
+                # Ajustar slider dinámicamente
                 if slider.max < max_val_intercept: slider.max = max(100, max_val_intercept * 1.5)
 
+                # Solver
                 es_max = dd_obj.value == "Maximizar"
                 res = resolver_simplex(c, A, b, signos, es_max)
                 
@@ -235,6 +312,8 @@ def main(page: ft.Page):
                     cont_res.bgcolor = C_VERDE_BG
                     txt_z.value = f"Z = {sol_z:.2f}"
                     txt_vars.value = " | ".join([f"X{k+1}={v:.2f}" for k,v in enumerate(sol_x)])
+                    
+                    # Mostrar gráfico solo si hay 2 variables
                     if len(c) == 2:
                         dibujar_grafico(datos_grafico, sol_x[0], sol_x[1], c, sol_z)
                         cont_grafico.visible = True
@@ -302,9 +381,10 @@ def main(page: ft.Page):
                 ft.Row([switch_slider, ft.Container(slider, expand=True)], alignment="spaceBetween")
             ]), bgcolor=C_AZUL_BG, padding=10, border_radius=10)
 
-        # --- AQUI ESTABA EL ERROR, CORREGIDO "ft.Icons" CON MAYUSCULA ---
+        # Botón Reset corregido (ft.Icons)
         btn_reset = ft.IconButton(icon=ft.Icons.RESTART_ALT, icon_color=C_ROJO, on_click=reset_app)
 
+        # Layout
         page.add(ft.Column([
             ft.Row([ft.Text("Solver Pro", size=20, weight="bold", color=C_AZUL), btn_reset], alignment="spaceBetween"),
             ft.Row([dd_obj, ft.ElevatedButton("+Var", on_click=add_var, bgcolor=C_AZUL, color=C_BLANCO)], alignment="spaceBetween"),
